@@ -18,13 +18,25 @@ jobs:
       - name: Install dependencies
         run: pip install yt-dlp google-api-python-client google-auth
 
+      - name: Start PO token server
+        run: |
+          git clone --depth 1 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /tmp/bgutil
+          cd /tmp/bgutil/server && npm install --quiet
+          node index.js &
+          # Wait until server actually responds
+          for i in $(seq 1 15); do
+            sleep 2
+            curl -sf http://127.0.0.1:4416 && echo "✅ Server ready!" && break
+            echo "Waiting... ($i/15)"
+          done
+
       - name: Download video
         env:
-          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
           VIDEO_ID: ${{ github.event.client_payload.video_id }}
         run: |
-          printf '%s' "$YOUTUBE_COOKIES" > /tmp/yt_cookies.txt
           echo "Downloading: $VIDEO_ID"
+          # Check yt-dlp sees the PO token plugin
+          yt-dlp -v 2>&1 | grep -i "pot\|bgutil" || echo "⚠️ No PO token plugin detected"
           yt-dlp \
             -f 'best[ext=mp4]/best' \
             --merge-output-format mp4 \
@@ -33,7 +45,6 @@ jobs:
             --no-playlist \
             --no-warnings \
             "https://www.youtube.com/watch?v=${VIDEO_ID}"
-
       - name: Upload to Google Drive
         env:
           SA_JSON:    ${{ secrets.GOOGLE_SA_JSON }}
