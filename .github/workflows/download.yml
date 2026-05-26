@@ -1,12 +1,5 @@
 # ================================================================
 #  YouTube → Google Drive  (GitHub Actions)
-#
-#  Triggered by Apps Script via repository_dispatch.
-#  Downloads the video with yt-dlp, uploads to Google Drive,
-#  and shares the file with the user's email address.
-#
-#  Required GitHub Secrets (repo Settings → Secrets → Actions):
-#    GOOGLE_SA_JSON   ← service account key JSON (full contents)
 # ================================================================
 
 name: YouTube → Drive
@@ -17,40 +10,40 @@ on:
 
 jobs:
   download:
-    runs-on: ubuntu-latest   # ffmpeg is pre-installed here
-    timeout-minutes: 90      # 30-min video + Drive upload = ~15 min; 90 is a safe ceiling
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
 
     steps:
 
-      # ── 1. Install Python packages ──────────────────────────────
       - name: Install dependencies
         run: pip install yt-dlp google-api-python-client google-auth
 
-      # ── 2. Download the video ───────────────────────────────────
       - name: Download video
         env:
           YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
           VIDEO_ID: ${{ github.event.client_payload.video_id }}
-          USER_EMAIL: ${{ github.event.client_payload.user_email }}
         run: |
-          echo "$YOUTUBE_COOKIES" > /tmp/yt_cookies.txt
-          echo "Downloading: $VIDEO_ID"
+          # Write cookies file (printf handles multi-line secrets better than echo)
+          printf '%s' "$YOUTUBE_COOKIES" > /tmp/yt_cookies.txt
+
+          # Debug — confirm cookies file and video ID look right
+          echo "Cookies file lines: $(wc -l < /tmp/yt_cookies.txt)"
+          echo "Downloading video ID: $VIDEO_ID"
+
           yt-dlp \
             -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' \
             --merge-output-format mp4 \
-            --extractor-args "youtube:player_client=ios" \
+            --extractor-args "youtube:player_client=tv_embedded" \
             --cookies /tmp/yt_cookies.txt \
             -o '/tmp/%(title)s.%(ext)s' \
             --no-playlist \
             --no-warnings \
             "https://www.youtube.com/watch?v=${VIDEO_ID}"
 
-      # ── 3. Upload to Google Drive and share with user ───────────
       - name: Upload to Google Drive
         env:
           SA_JSON:    ${{ secrets.GOOGLE_SA_JSON }}
-          USER_EMAIL: $USER_EMAIL
-          VIDEO_TITLE: ${{ github.event.client_payload.title }}
+          USER_EMAIL: ${{ github.event.client_payload.user_email }}
         run: |
           python3 - << 'PYEOF'
           import os, glob, json
@@ -58,13 +51,11 @@ jobs:
           from googleapiclient.discovery import build
           from googleapiclient.http import MediaFileUpload
 
-          # ── Auth ────────────────────────────────────────────────
           sa_info = json.loads(os.environ['SA_JSON'])
           creds   = service_account.Credentials.from_service_account_info(
               sa_info, scopes=['https://www.googleapis.com/auth/drive.file'])
           drive   = build('drive', 'v3', credentials=creds)
 
-          # ── Find downloaded file ────────────────────────────────
           files = glob.glob('/tmp/*.mp4')
           if not files:
               raise SystemExit('ERROR: no mp4 file found in /tmp')
@@ -72,9 +63,8 @@ jobs:
           file_path = files[0]
           file_name = os.path.basename(file_path)
           size_mb   = round(os.path.getsize(file_path) / 1_000_000, 1)
-          print(f'Uploading: {file_name}  ({size_mb} MB)')
+          print(f'Uploading: {file_name} ({size_mb} MB)')
 
-          # ── Upload ──────────────────────────────────────────────
           media    = MediaFileUpload(file_path, mimetype='video/mp4',
                                      resumable=True, chunksize=10*1024*1024)
           uploaded = drive.files().create(
@@ -86,8 +76,6 @@ jobs:
           file_id = uploaded['id']
           print(f'Uploaded. Drive file ID: {file_id}')
 
-          # ── Share with user ─────────────────────────────────────
-          # File will appear in the user's Drive → "Shared with me"
           user_email = os.environ.get('USER_EMAIL', '').strip()
           if user_email:
               drive.permissions().create(
