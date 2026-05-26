@@ -28,10 +28,14 @@ jobs:
 
       # ── 2. Download the video ───────────────────────────────────
       - name: Download video
+        env:
+          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
         run: |
+          echo "$YOUTUBE_COOKIES" > /tmp/yt_cookies.txt
           yt-dlp \
             -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' \
             --merge-output-format mp4 \
+            --cookies /tmp/yt_cookies.txt \
             -o '/tmp/%(title)s.%(ext)s' \
             --no-playlist \
             --no-warnings \
