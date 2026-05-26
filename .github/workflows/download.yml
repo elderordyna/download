@@ -12,24 +12,26 @@ jobs:
     steps:
 
       - name: Install dependencies
-        run: pip install requests google-api-python-client google-auth
+        run: pip install requests google-api-python-client google-auth google-auth-oauthlib
 
       - name: Download and upload to Drive
         env:
-          VIDEO_ID:        ${{ github.event.client_payload.video_id }}
-          USER_EMAIL:      ${{ github.event.client_payload.user_email }}
-          SA_JSON:         ${{ secrets.GOOGLE_SA_JSON }}
-          DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
+          VIDEO_ID:              ${{ github.event.client_payload.video_id }}
+          GOOGLE_CLIENT_ID:      ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET:  ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN:  ${{ secrets.GOOGLE_REFRESH_TOKEN }}
         run: |
           python3 - << 'PYEOF'
           import os, json, requests
-          from google.oauth2 import service_account
+          from google.oauth2.credentials import Credentials
+          from google.auth.transport.requests import Request
           from googleapiclient.discovery import build
           from googleapiclient.http import MediaFileUpload
 
           video_id = os.environ['VIDEO_ID']
           yt_url   = f'https://www.youtube.com/watch?v={video_id}'
 
+          # ── Session setup ────────────────────────────────────────
           session = requests.Session()
           session.headers.update({
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -87,23 +89,27 @@ jobs:
           size_mb = round(os.path.getsize(file_path) / 1e6, 1)
           print(f'Download complete: {file_name} ({size_mb} MB)')
 
-          # Step 4: Upload to Google Drive folder
+          # Step 4: Upload to YOUR Google Drive (as you, not a service account)
           print('Uploading to Drive...')
-          sa_info   = json.loads(os.environ['SA_JSON'])
-          folder_id = os.environ['DRIVE_FOLDER_ID']
-          creds     = service_account.Credentials.from_service_account_info(
-              sa_info, scopes=['https://www.googleapis.com/auth/drive.file'])
-          drive     = build('drive', 'v3', credentials=creds)
+          creds = Credentials(
+              token=None,
+              refresh_token=os.environ['GOOGLE_REFRESH_TOKEN'],
+              token_uri='https://oauth2.googleapis.com/token',
+              client_id=os.environ['GOOGLE_CLIENT_ID'],
+              client_secret=os.environ['GOOGLE_CLIENT_SECRET'],
+              scopes=['https://www.googleapis.com/auth/drive.file']
+          )
+          creds.refresh(Request())
+
+          drive = build('drive', 'v3', credentials=creds)
 
           media    = MediaFileUpload(file_path, mimetype='video/mp4',
                                      resumable=True, chunksize=10 * 1024 * 1024)
           uploaded = drive.files().create(
-              body={'name': file_name, 'parents': [folder_id]},
+              body={'name': file_name},
               media_body=media,
               fields='id,name'
           ).execute()
 
-          file_id = uploaded['id']
-          print(f'Uploaded: {file_id}')
-          print('Done! Check your YouTube Downloads folder in Google Drive.')
+          print(f'Done! "{file_name}" is in your Google Drive.')
           PYEOF
