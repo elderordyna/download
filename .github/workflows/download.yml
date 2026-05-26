@@ -29,19 +29,23 @@ jobs:
           video_id = os.environ['VIDEO_ID']
           yt_url   = f'https://www.youtube.com/watch?v={video_id}'
 
-          headers = {
-              'Content-Type':  'application/json',
-              'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-              'Referer':       'https://cnvmp3.com/',
-              'Origin':        'https://cnvmp3.com',
-          }
+          # Use a session so cookies carry through all requests automatically
+          session = requests.Session()
+          session.headers.update({
+              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+              'Referer':    'https://cnvmp3.com/v54',
+              'Origin':     'https://cnvmp3.com',
+          })
+
+          # ── Step 0: Visit the page first to get a session cookie ─
+          print('Starting session...')
+          session.get('https://cnvmp3.com/v54', timeout=30)
 
           # ── Step 1: Get video title ──────────────────────────────
           print(f'Getting video info: {video_id}')
-          r1 = requests.post(
+          r1 = session.post(
               'https://cnvmp3.com/get_video_data.php',
               json={'url': yt_url, 'token': '1234'},
-              headers=headers,
               timeout=30
           )
           r1.raise_for_status()
@@ -53,10 +57,9 @@ jobs:
 
           # ── Step 2: Get download link ────────────────────────────
           print('Getting download link (may take ~10s)...')
-          r2 = requests.post(
+          r2 = session.post(
               'https://cnvmp3.com/download_video_ucep.php',
               json={'url': yt_url, 'quality': 720, 'title': title, 'formatValue': 0},
-              headers=headers,
               timeout=120
           )
           r2.raise_for_status()
@@ -72,19 +75,14 @@ jobs:
           file_name  = f'{safe_title}.mp4'
           file_path  = f'/tmp/{file_name}'
 
-          with requests.get(
-              download_url,
-              headers={'Referer': 'https://cnvmp3.com/'},
-              stream=True,
-              timeout=600
-          ) as r:
+          with session.get(download_url, stream=True, timeout=600) as r:
               r.raise_for_status()
               with open(file_path, 'wb') as f:
                   downloaded = 0
                   for chunk in r.iter_content(chunk_size=10 * 1024 * 1024):
                       f.write(chunk)
                       downloaded += len(chunk)
-                      print(f'  {round(downloaded / 1e6, 1)} MB downloaded...')
+                      print(f'  {round(downloaded / 1e6, 1)} MB...')
 
           size_mb = round(os.path.getsize(file_path) / 1e6, 1)
           print(f'Download complete: {file_name} ({size_mb} MB)')
