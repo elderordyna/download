@@ -23,22 +23,12 @@ jobs:
           YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
           VIDEO_ID: ${{ github.event.client_payload.video_id }}
         run: |
-          # Write cookies file (printf handles multi-line secrets better than echo)
           printf '%s' "$YOUTUBE_COOKIES" > /tmp/yt_cookies.txt
-          echo "=== Cookie names ===" && grep -v "^#" /tmp/yt_cookies.txt | awk -F'\t' '{print $6}'
-
-          # Debug — confirm cookies file and video ID look right
-          echo "Cookies file lines: $(wc -l < /tmp/yt_cookies.txt)"
-          echo "Downloading video ID: $VIDEO_ID"
-
+          echo "Downloading: $VIDEO_ID"
           yt-dlp \
-            -f 'best[ext=mp4]/best' \
-            --merge-output-format mp4 \
             --extractor-args "youtube:player_client=ios" \
             --cookies /tmp/yt_cookies.txt \
-            -o '/tmp/%(title)s.%(ext)s' \
-            --no-playlist \
-            --no-warnings \
+            --list-formats \
             "https://www.youtube.com/watch?v=${VIDEO_ID}"
 
       - name: Upload to Google Drive
