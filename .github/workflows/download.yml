@@ -25,6 +25,7 @@ jobs:
         run: |
           # Write cookies file (printf handles multi-line secrets better than echo)
           printf '%s' "$YOUTUBE_COOKIES" > /tmp/yt_cookies.txt
+          echo "=== Cookie names ===" && grep -v "^#" /tmp/yt_cookies.txt | awk -F'\t' '{print $6}'
 
           # Debug — confirm cookies file and video ID look right
           echo "Cookies file lines: $(wc -l < /tmp/yt_cookies.txt)"
