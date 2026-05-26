@@ -16,9 +16,10 @@ jobs:
 
       - name: Download and upload to Drive
         env:
-          VIDEO_ID:   ${{ github.event.client_payload.video_id }}
-          USER_EMAIL: ${{ github.event.client_payload.user_email }}
-          SA_JSON:    ${{ secrets.GOOGLE_SA_JSON }}
+          VIDEO_ID:        ${{ github.event.client_payload.video_id }}
+          USER_EMAIL:      ${{ github.event.client_payload.user_email }}
+          SA_JSON:         ${{ secrets.GOOGLE_SA_JSON }}
+          DRIVE_FOLDER_ID: ${{ secrets.DRIVE_FOLDER_ID }}
         run: |
           python3 - << 'PYEOF'
           import os, json, requests
@@ -29,7 +30,6 @@ jobs:
           video_id = os.environ['VIDEO_ID']
           yt_url   = f'https://www.youtube.com/watch?v={video_id}'
 
-          # Use a session so cookies carry through all requests automatically
           session = requests.Session()
           session.headers.update({
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -37,11 +37,11 @@ jobs:
               'Origin':     'https://cnvmp3.com',
           })
 
-          # ── Step 0: Visit the page first to get a session cookie ─
+          # Step 0: Visit page to get session cookie
           print('Starting session...')
           session.get('https://cnvmp3.com/v54', timeout=30)
 
-          # ── Step 1: Get video title ──────────────────────────────
+          # Step 1: Get video title
           print(f'Getting video info: {video_id}')
           r1 = session.post(
               'https://cnvmp3.com/get_video_data.php',
@@ -55,7 +55,7 @@ jobs:
           title = d1['title']
           print(f'Title: {title}')
 
-          # ── Step 2: Get download link ────────────────────────────
+          # Step 2: Get download link
           print('Getting download link (may take ~10s)...')
           r2 = session.post(
               'https://cnvmp3.com/download_video_ucep.php',
@@ -69,7 +69,7 @@ jobs:
           download_url = d2['download_link']
           print(f'Download URL: {download_url}')
 
-          # ── Step 3: Download the MP4 ─────────────────────────────
+          # Step 3: Download the MP4
           print('Downloading file...')
           safe_title = "".join(c for c in title if c not in r'\/:*?"<>|').strip()
           file_name  = f'{safe_title}.mp4'
@@ -87,32 +87,23 @@ jobs:
           size_mb = round(os.path.getsize(file_path) / 1e6, 1)
           print(f'Download complete: {file_name} ({size_mb} MB)')
 
-          # ── Step 4: Upload to Google Drive ───────────────────────
+          # Step 4: Upload to Google Drive folder
           print('Uploading to Drive...')
-          sa_info = json.loads(os.environ['SA_JSON'])
-          creds   = service_account.Credentials.from_service_account_info(
+          sa_info   = json.loads(os.environ['SA_JSON'])
+          folder_id = os.environ['DRIVE_FOLDER_ID']
+          creds     = service_account.Credentials.from_service_account_info(
               sa_info, scopes=['https://www.googleapis.com/auth/drive.file'])
-          drive   = build('drive', 'v3', credentials=creds)
+          drive     = build('drive', 'v3', credentials=creds)
 
           media    = MediaFileUpload(file_path, mimetype='video/mp4',
                                      resumable=True, chunksize=10 * 1024 * 1024)
           uploaded = drive.files().create(
-              body={'name': file_name},
+              body={'name': file_name, 'parents': [folder_id]},
               media_body=media,
               fields='id,name'
           ).execute()
 
           file_id = uploaded['id']
           print(f'Uploaded: {file_id}')
-
-          user_email = os.environ.get('USER_EMAIL', '').strip()
-          if user_email:
-              drive.permissions().create(
-                  fileId=file_id,
-                  body={'type': 'user', 'role': 'writer', 'emailAddress': user_email},
-                  sendNotificationEmail=False
-              ).execute()
-              print(f'Shared with: {user_email}')
-
-          print('Done!')
+          print('Done! Check your YouTube Downloads folder in Google Drive.')
           PYEOF
