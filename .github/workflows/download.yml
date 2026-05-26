@@ -11,33 +11,29 @@ jobs:
 
     steps:
 
-      - name: Install dependencies
+      - name: Install Python dependencies
         run: |
           pip install -U "yt-dlp>=2025.05.22" bgutil-ytdlp-pot-provider \
             google-api-python-client google-auth
 
-      - name: Build and start PO token server
+      - name: Build PO token script
         run: |
-          git clone --depth 1 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /tmp/bgutil
+          git clone --single-branch --branch 1.3.1 \
+            https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /tmp/bgutil
           cd /tmp/bgutil/server
-          npm install --quiet
-          npm run build
-          node build/src/main.js &
-          for i in $(seq 1 15); do
-            sleep 2
-            curl -sf http://127.0.0.1:4416 && echo "✅ Server ready!" && break
-            echo "Waiting... ($i/15)"
-          done
+          npm ci --quiet
+          npx tsc
+          echo "✅ PO token script ready"
 
       - name: Download video
         env:
           VIDEO_ID: ${{ github.event.client_payload.video_id }}
         run: |
           echo "Downloading: $VIDEO_ID"
-          yt-dlp -v 2>&1 | grep -i "pot\|bgutil" || echo "⚠️ No PO token plugin detected"
           yt-dlp \
             -f 'best[ext=mp4]/best' \
             --merge-output-format mp4 \
+            --extractor-args "youtubepot-bgutilscript:server_home=/tmp/bgutil/server" \
             --extractor-args "youtube:player_client=ios" \
             -o '/tmp/%(title)s.%(ext)s' \
             --no-playlist \
