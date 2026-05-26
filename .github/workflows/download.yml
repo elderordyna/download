@@ -30,23 +30,26 @@ jobs:
       - name: Download video
         env:
           YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
+          VIDEO_ID: ${{ github.event.client_payload.video_id }}
+          USER_EMAIL: ${{ github.event.client_payload.user_email }}
         run: |
           echo "$YOUTUBE_COOKIES" > /tmp/yt_cookies.txt
+          echo "Downloading: $VIDEO_ID"
           yt-dlp \
             -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' \
             --merge-output-format mp4 \
-            --extractor-args "youtube:player_client=ios"
+            --extractor-args "youtube:player_client=ios" \
             --cookies /tmp/yt_cookies.txt \
             -o '/tmp/%(title)s.%(ext)s' \
             --no-playlist \
             --no-warnings \
-            'https://www.youtube.com/watch?v=${{ github.event.client_payload.video_id }}'
+            "https://www.youtube.com/watch?v=${VIDEO_ID}"
 
       # ── 3. Upload to Google Drive and share with user ───────────
       - name: Upload to Google Drive
         env:
           SA_JSON:    ${{ secrets.GOOGLE_SA_JSON }}
-          USER_EMAIL: ${{ github.event.client_payload.user_email }}
+          USER_EMAIL: $USER_EMAIL
           VIDEO_TITLE: ${{ github.event.client_payload.title }}
         run: |
           python3 - << 'PYEOF'
