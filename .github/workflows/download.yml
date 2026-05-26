@@ -11,15 +11,22 @@ jobs:
 
     steps:
 
+      - name: Debug payload
+        run: |
+          echo "videoId:    ${{ github.event.client_payload.videoId }}"
+          echo "userEmail:  ${{ github.event.client_payload.userEmail }}"
+          echo "title:      ${{ github.event.client_payload.title }}"
+
       - name: Install dependencies
         run: pip install requests google-api-python-client google-auth google-auth-oauthlib
 
       - name: Download and upload to Drive
         env:
-          VIDEO_ID: ${{ github.event.client_payload.video_id }}
-          GOOGLE_CLIENT_ID:      ${{ secrets.GOOGLE_CLIENT_ID }}
-          GOOGLE_CLIENT_SECRET:  ${{ secrets.GOOGLE_CLIENT_SECRET }}
-          GOOGLE_REFRESH_TOKEN:  ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          VIDEO_ID:             ${{ github.event.client_payload.videoId }}
+          USER_EMAIL:           ${{ github.event.client_payload.userEmail }}
+          GOOGLE_CLIENT_ID:     ${{ secrets.GOOGLE_CLIENT_ID }}
+          GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
+          GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
         run: |
           python3 - << 'PYEOF'
           import os, json, requests
@@ -29,10 +36,9 @@ jobs:
           from googleapiclient.http import MediaFileUpload
 
           video_id  = os.environ['VIDEO_ID']
-          yt_url    = f'https://www.youtube.com/watch?v={video_id}'
           folder_id = '1EuhneFQwGBJmJ2kDByEUk9Zy6fIN1ken'
+          yt_url    = f'https://www.youtube.com/watch?v={video_id}'
 
-          # ── Session setup ────────────────────────────────────────
           session = requests.Session()
           session.headers.update({
               'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -90,7 +96,7 @@ jobs:
           size_mb = round(os.path.getsize(file_path) / 1e6, 1)
           print(f'Download complete: {file_name} ({size_mb} MB)')
 
-          # Step 4: Upload to your Google Drive folder
+          # Step 4: Upload to Google Drive as the user
           print('Uploading to Drive...')
           creds = Credentials(
               token=None,
