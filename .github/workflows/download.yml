@@ -21,9 +21,10 @@ jobs:
       - name: Start PO token server
         run: |
           git clone --depth 1 https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /tmp/bgutil
-          cd /tmp/bgutil/server && npm install --quiet
-          node index.js &
-          # Wait until server actually responds
+          cd /tmp/bgutil/server
+          npm install --quiet
+          npm run build
+          node build/main.js &
           for i in $(seq 1 15); do
             sleep 2
             curl -sf http://127.0.0.1:4416 && echo "✅ Server ready!" && break
