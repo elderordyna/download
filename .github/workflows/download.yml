@@ -16,7 +16,7 @@ jobs:
 
       - name: Download and upload to Drive
         env:
-          VIDEO_ID:              ${{ github.event.client_payload.video_id }}
+          VIDEO_ID: ${{ github.event.client_payload.video_id }}
           GOOGLE_CLIENT_ID:      ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET:  ${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_REFRESH_TOKEN:  ${{ secrets.GOOGLE_REFRESH_TOKEN }}
