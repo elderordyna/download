@@ -11,65 +11,93 @@ jobs:
 
     steps:
 
-      - name: Install Python dependencies
-        run: |
-          pip install -U "yt-dlp>=2025.05.22" bgutil-ytdlp-pot-provider \
-            google-api-python-client google-auth
+      - name: Install dependencies
+        run: pip install requests google-api-python-client google-auth
 
-      - name: Build PO token script
-        run: |
-          git clone --single-branch --branch 1.3.1 \
-            https://github.com/Brainicism/bgutil-ytdlp-pot-provider.git /tmp/bgutil
-          cd /tmp/bgutil/server
-          npm ci --quiet
-          npx tsc
-          echo "✅ PO token script ready"
-
-      - name: Download video
+      - name: Download and upload to Drive
         env:
-          VIDEO_ID:        ${{ github.event.client_payload.video_id }}
-          YOUTUBE_COOKIES: ${{ secrets.YOUTUBE_COOKIES }}
-        run: |
-          printf '%s' "$YOUTUBE_COOKIES" > /tmp/yt_cookies.txt
-          echo "Downloading: $VIDEO_ID"
-          yt-dlp \
-            -f 'best[ext=mp4]/best' \
-            --merge-output-format mp4 \
-            --extractor-args "youtubepot-bgutilscript:server_home=/tmp/bgutil/server" \
-            --extractor-args "youtube:player_client=web" \
-            --cookies /tmp/yt_cookies.txt \
-            -o '/tmp/%(title)s.%(ext)s' \
-            --no-playlist \
-            --no-warnings \
-            "https://www.youtube.com/watch?v=${VIDEO_ID}"
-
-      - name: Upload to Google Drive
-        env:
-          SA_JSON:    ${{ secrets.GOOGLE_SA_JSON }}
+          VIDEO_ID:   ${{ github.event.client_payload.video_id }}
           USER_EMAIL: ${{ github.event.client_payload.user_email }}
+          SA_JSON:    ${{ secrets.GOOGLE_SA_JSON }}
         run: |
           python3 - << 'PYEOF'
-          import os, glob, json
+          import os, json, requests
           from google.oauth2 import service_account
           from googleapiclient.discovery import build
           from googleapiclient.http import MediaFileUpload
 
+          video_id = os.environ['VIDEO_ID']
+          yt_url   = f'https://www.youtube.com/watch?v={video_id}'
+
+          headers = {
+              'Content-Type':  'application/json',
+              'User-Agent':    'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+              'Referer':       'https://cnvmp3.com/',
+              'Origin':        'https://cnvmp3.com',
+          }
+
+          # ── Step 1: Get video title ──────────────────────────────
+          print(f'Getting video info: {video_id}')
+          r1 = requests.post(
+              'https://cnvmp3.com/get_video_data.php',
+              json={'url': yt_url, 'token': '1234'},
+              headers=headers,
+              timeout=30
+          )
+          r1.raise_for_status()
+          d1 = r1.json()
+          if not d1.get('success'):
+              raise Exception(f'get_video_data failed: {d1}')
+          title = d1['title']
+          print(f'Title: {title}')
+
+          # ── Step 2: Get download link ────────────────────────────
+          print('Getting download link (may take ~10s)...')
+          r2 = requests.post(
+              'https://cnvmp3.com/download_video_ucep.php',
+              json={'url': yt_url, 'quality': 720, 'title': title, 'formatValue': 0},
+              headers=headers,
+              timeout=120
+          )
+          r2.raise_for_status()
+          d2 = r2.json()
+          if not d2.get('success'):
+              raise Exception(f'download_video_ucep failed: {d2}')
+          download_url = d2['download_link']
+          print(f'Download URL: {download_url}')
+
+          # ── Step 3: Download the MP4 ─────────────────────────────
+          print('Downloading file...')
+          safe_title = "".join(c for c in title if c not in r'\/:*?"<>|').strip()
+          file_name  = f'{safe_title}.mp4'
+          file_path  = f'/tmp/{file_name}'
+
+          with requests.get(
+              download_url,
+              headers={'Referer': 'https://cnvmp3.com/'},
+              stream=True,
+              timeout=600
+          ) as r:
+              r.raise_for_status()
+              with open(file_path, 'wb') as f:
+                  downloaded = 0
+                  for chunk in r.iter_content(chunk_size=10 * 1024 * 1024):
+                      f.write(chunk)
+                      downloaded += len(chunk)
+                      print(f'  {round(downloaded / 1e6, 1)} MB downloaded...')
+
+          size_mb = round(os.path.getsize(file_path) / 1e6, 1)
+          print(f'Download complete: {file_name} ({size_mb} MB)')
+
+          # ── Step 4: Upload to Google Drive ───────────────────────
+          print('Uploading to Drive...')
           sa_info = json.loads(os.environ['SA_JSON'])
           creds   = service_account.Credentials.from_service_account_info(
               sa_info, scopes=['https://www.googleapis.com/auth/drive.file'])
           drive   = build('drive', 'v3', credentials=creds)
 
-          files = glob.glob('/tmp/*.mp4')
-          if not files:
-              raise SystemExit('ERROR: no mp4 file found in /tmp')
-
-          file_path = files[0]
-          file_name = os.path.basename(file_path)
-          size_mb   = round(os.path.getsize(file_path) / 1_000_000, 1)
-          print(f'Uploading: {file_name} ({size_mb} MB)')
-
           media    = MediaFileUpload(file_path, mimetype='video/mp4',
-                                     resumable=True, chunksize=10*1024*1024)
+                                     resumable=True, chunksize=10 * 1024 * 1024)
           uploaded = drive.files().create(
               body={'name': file_name},
               media_body=media,
@@ -77,7 +105,7 @@ jobs:
           ).execute()
 
           file_id = uploaded['id']
-          print(f'Uploaded. Drive file ID: {file_id}')
+          print(f'Uploaded: {file_id}')
 
           user_email = os.environ.get('USER_EMAIL', '').strip()
           if user_email:
