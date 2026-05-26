@@ -26,9 +26,12 @@ jobs:
           printf '%s' "$YOUTUBE_COOKIES" > /tmp/yt_cookies.txt
           echo "Downloading: $VIDEO_ID"
           yt-dlp \
+            -f 'best[ext=mp4]/best' \
+            --merge-output-format mp4 \
             --extractor-args "youtube:player_client=ios" \
-            --cookies /tmp/yt_cookies.txt \
-            --list-formats \
+            -o '/tmp/%(title)s.%(ext)s' \
+            --no-playlist \
+            --no-warnings \
             "https://www.youtube.com/watch?v=${VIDEO_ID}"
 
       - name: Upload to Google Drive
