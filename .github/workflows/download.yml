@@ -1,0 +1,93 @@
+# ================================================================
+#  YouTube → Google Drive  (GitHub Actions)
+#
+#  Triggered by Apps Script via repository_dispatch.
+#  Downloads the video with yt-dlp, uploads to Google Drive,
+#  and shares the file with the user's email address.
+#
+#  Required GitHub Secrets (repo Settings → Secrets → Actions):
+#    GOOGLE_SA_JSON   ← service account key JSON (full contents)
+# ================================================================
+
+name: YouTube → Drive
+
+on:
+  repository_dispatch:
+    types: [download-video]
+
+jobs:
+  download:
+    runs-on: ubuntu-latest   # ffmpeg is pre-installed here
+    timeout-minutes: 90      # 30-min video + Drive upload = ~15 min; 90 is a safe ceiling
+
+    steps:
+
+      # ── 1. Install Python packages ──────────────────────────────
+      - name: Install dependencies
+        run: pip install yt-dlp google-api-python-client google-auth
+
+      # ── 2. Download the video ───────────────────────────────────
+      - name: Download video
+        run: |
+          yt-dlp \
+            -f 'bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best' \
+            --merge-output-format mp4 \
+            -o '/tmp/%(title)s.%(ext)s' \
+            --no-playlist \
+            --no-warnings \
+            'https://www.youtube.com/watch?v=${{ github.event.client_payload.video_id }}'
+
+      # ── 3. Upload to Google Drive and share with user ───────────
+      - name: Upload to Google Drive
+        env:
+          SA_JSON:    ${{ secrets.GOOGLE_SA_JSON }}
+          USER_EMAIL: ${{ github.event.client_payload.user_email }}
+          VIDEO_TITLE: ${{ github.event.client_payload.title }}
+        run: |
+          python3 - << 'PYEOF'
+          import os, glob, json
+          from google.oauth2 import service_account
+          from googleapiclient.discovery import build
+          from googleapiclient.http import MediaFileUpload
+
+          # ── Auth ────────────────────────────────────────────────
+          sa_info = json.loads(os.environ['SA_JSON'])
+          creds   = service_account.Credentials.from_service_account_info(
+              sa_info, scopes=['https://www.googleapis.com/auth/drive.file'])
+          drive   = build('drive', 'v3', credentials=creds)
+
+          # ── Find downloaded file ────────────────────────────────
+          files = glob.glob('/tmp/*.mp4')
+          if not files:
+              raise SystemExit('ERROR: no mp4 file found in /tmp')
+
+          file_path = files[0]
+          file_name = os.path.basename(file_path)
+          size_mb   = round(os.path.getsize(file_path) / 1_000_000, 1)
+          print(f'Uploading: {file_name}  ({size_mb} MB)')
+
+          # ── Upload ──────────────────────────────────────────────
+          media    = MediaFileUpload(file_path, mimetype='video/mp4',
+                                     resumable=True, chunksize=10*1024*1024)
+          uploaded = drive.files().create(
+              body={'name': file_name},
+              media_body=media,
+              fields='id,name'
+          ).execute()
+
+          file_id = uploaded['id']
+          print(f'Uploaded. Drive file ID: {file_id}')
+
+          # ── Share with user ─────────────────────────────────────
+          # File will appear in the user's Drive → "Shared with me"
+          user_email = os.environ.get('USER_EMAIL', '').strip()
+          if user_email:
+              drive.permissions().create(
+                  fileId=file_id,
+                  body={'type': 'user', 'role': 'writer', 'emailAddress': user_email},
+                  sendNotificationEmail=False
+              ).execute()
+              print(f'Shared with: {user_email}')
+
+          print('Done!')
+          PYEOF
