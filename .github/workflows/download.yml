@@ -28,8 +28,9 @@ jobs:
           from googleapiclient.discovery import build
           from googleapiclient.http import MediaFileUpload
 
-          video_id = os.environ['VIDEO_ID']
-          yt_url   = f'https://www.youtube.com/watch?v={video_id}'
+          video_id  = os.environ['VIDEO_ID']
+          yt_url    = f'https://www.youtube.com/watch?v={video_id}'
+          folder_id = '1EuhneFQwGBJmJ2kDByEUk9Zy6fIN1ken'
 
           # ── Session setup ────────────────────────────────────────
           session = requests.Session()
@@ -89,7 +90,7 @@ jobs:
           size_mb = round(os.path.getsize(file_path) / 1e6, 1)
           print(f'Download complete: {file_name} ({size_mb} MB)')
 
-          # Step 4: Upload to YOUR Google Drive (as you, not a service account)
+          # Step 4: Upload to your Google Drive folder
           print('Uploading to Drive...')
           creds = Credentials(
               token=None,
@@ -101,15 +102,14 @@ jobs:
           )
           creds.refresh(Request())
 
-          drive = build('drive', 'v3', credentials=creds)
-
+          drive    = build('drive', 'v3', credentials=creds)
           media    = MediaFileUpload(file_path, mimetype='video/mp4',
                                      resumable=True, chunksize=10 * 1024 * 1024)
           uploaded = drive.files().create(
-              body={'name': file_name},
+              body={'name': file_name, 'parents': [folder_id]},
               media_body=media,
               fields='id,name'
           ).execute()
 
-          print(f'Done! "{file_name}" is in your Google Drive.')
+          print(f'Done! "{file_name}" is in your YouTube Downloads folder.')
           PYEOF
