@@ -109,7 +109,10 @@ jobs:
               s.get('https://app.ytdown.to/en28/', timeout=30)
 
               api_url  = 'https://app.ytdown.to/proxy.php'
-              api_hdrs = {'Content-Type': 'application/json; charset=utf-8'}
+              api_hdrs = {
+                  'Content-Type': 'application/json; charset=utf-8',
+                  'X-Requested-With': 'XMLHttpRequest',
+              }
 
               # Step 1: Get video info + quality options
               print('  ytdown.to: getting video info...')
