@@ -25,6 +25,8 @@ jobs:
           GOOGLE_CLIENT_ID:     ${{ secrets.GOOGLE_CLIENT_ID }}
           GOOGLE_CLIENT_SECRET: ${{ secrets.GOOGLE_CLIENT_SECRET }}
           GOOGLE_REFRESH_TOKEN: ${{ secrets.GOOGLE_REFRESH_TOKEN }}
+          WEBHOOK_URL:          ${{ secrets.WEBHOOK_URL }}
+          WEBHOOK_TOKEN:        ${{ secrets.WEBHOOK_TOKEN }}
         run: |
           python3 - << 'PYEOF'
           import os, json, time, requests
@@ -37,83 +39,183 @@ jobs:
           folder_id = '1EuhneFQwGBJmJ2kDByEUk9Zy6fIN1ken'
           yt_url    = f'https://www.youtube.com/watch?v={video_id}'
 
-          session = requests.Session()
-          session.headers.update({
-              'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-              'Referer':    'https://cnvmp3.com/v54',
-              'Origin':     'https://cnvmp3.com',
-          })
+          # ── Status updater ───────────────────────────────────────
+          def update_status(msg):
+              url   = os.environ.get('WEBHOOK_URL', '')
+              token = os.environ.get('WEBHOOK_TOKEN', '')
+              if not url: return
+              try:
+                  requests.post(url, json={'token': token, 'status': msg}, timeout=10)
+                  print(f'[status] {msg}')
+              except Exception as ex:
+                  print(f'Status update failed: {ex}')
 
-          # Step 0: Visit page to get session cookie
-          print('Starting session...')
-          session.get('https://cnvmp3.com/v54', timeout=30)
+          # ════════════════════════════════════════════════════════
+          #  SOURCE 1 — cnvmp3.com
+          # ════════════════════════════════════════════════════════
+          def try_cnvmp3(video_id):
+              yt_url = f'https://www.youtube.com/watch?v={video_id}'
+              s = requests.Session()
+              s.headers.update({
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                  'Referer': 'https://cnvmp3.com/v54',
+                  'Origin':  'https://cnvmp3.com',
+              })
+              s.get('https://cnvmp3.com/v54', timeout=30)
 
-          # Step 1: Get video title
-          print(f'Getting video info: {video_id}')
-          r1 = session.post(
-              'https://cnvmp3.com/get_video_data.php',
-              json={'url': yt_url, 'token': '1234'},
-              timeout=30
-          )
-          r1.raise_for_status()
-          d1 = r1.json()
-          if not d1.get('success'):
-              raise Exception(f'get_video_data failed: {d1}')
-          title = d1['title']
-          print(f'Title: {title}')
+              # Get title
+              r1 = s.post('https://cnvmp3.com/get_video_data.php',
+                          json={'url': yt_url, 'token': '1234'}, timeout=30)
+              r1.raise_for_status()
+              d1 = r1.json()
+              if not d1.get('success'):
+                  raise Exception(f'get_video_data failed: {d1}')
+              title = d1['title']
 
-          # Step 2: Get download link
-          # Tries 720p → 480p → 360p, retries up to 3 times with 15s wait between attempts
-          download_url = None
-          d2 = {}
-          for attempt in range(1, 4):
-              print(f'Attempt {attempt}/3...')
-              for quality in [720, 480, 360]:
-                  print(f'  Trying {quality}p...')
-                  r2 = session.post(
-                      'https://cnvmp3.com/download_video_ucep.php',
-                      json={'url': yt_url, 'quality': quality, 'title': title, 'formatValue': 0},
-                      timeout=120
-                  )
-                  r2.raise_for_status()
-                  d2 = r2.json()
-                  if d2.get('success'):
-                      download_url = d2['download_link']
-                      print(f'  Got download link at {quality}p')
+              # Get download link — try qualities, retry up to 3 times
+              d2 = {}
+              for attempt in range(1, 4):
+                  update_status(f'🔗 cnvmp3: processing (attempt {attempt}/3)...')
+                  for quality in [720, 480, 360]:
+                      r2 = s.post('https://cnvmp3.com/download_video_ucep.php',
+                                  json={'url': yt_url, 'quality': quality,
+                                        'title': title, 'formatValue': 0},
+                                  timeout=120)
+                      r2.raise_for_status()
+                      d2 = r2.json()
+                      if d2.get('success'):
+                          print(f'  cnvmp3: got link at {quality}p')
+                          return d2['download_link'], title
+                      print(f'  cnvmp3: {quality}p failed: {d2.get("error")}')
+                  if attempt < 3:
+                      print('  Waiting 15s before retry...')
+                      time.sleep(15)
+
+              raise Exception(f'cnvmp3 all attempts failed: {d2}')
+
+          # ════════════════════════════════════════════════════════
+          #  SOURCE 2 — ytdown.to  (backup)
+          # ════════════════════════════════════════════════════════
+          def try_ytdownto(video_id):
+              yt_url = f'https://www.youtube.com/watch?v={video_id}'
+              s = requests.Session()
+              s.headers.update({
+                  'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                  'Referer': 'https://app.ytdown.to/en28/',
+                  'Origin':  'https://app.ytdown.to',
+              })
+
+              # Visit page to establish session
+              s.get('https://app.ytdown.to/en28/', timeout=30)
+
+              api_url  = 'https://app.ytdown.to/proxy.php'
+              api_hdrs = {'Content-Type': 'application/json; charset=utf-8'}
+
+              # Step 1: Get video info + quality options
+              print('  ytdown.to: getting video info...')
+              r1 = s.post(api_url, data=json.dumps(yt_url),
+                          headers=api_hdrs, timeout=30)
+              r1.raise_for_status()
+              d1 = r1.json()
+              if d1['api']['status'] != 'ok':
+                  raise Exception(f'ytdown.to info failed: {d1["api"]}')
+
+              title       = d1['api']['title']
+              media_items = d1['api']['mediaItems']
+
+              # Pick best quality (720p → 480p → 360p)
+              worker_url = None
+              for quality in ['720p', '480p', '360p']:
+                  for item in media_items:
+                      if item['type'] == 'Video' and quality in item['mediaUrl']:
+                          worker_url = item['mediaUrl']
+                          break
+                  if worker_url:
+                      print(f'  ytdown.to: selected {quality}')
                       break
-                  else:
-                      print(f'  {quality}p failed: {d2.get("error", "unknown")}')
-              if download_url:
-                  break
-              if attempt < 3:
-                  print(f'All qualities failed, waiting 15s before retry...')
-                  time.sleep(15)
 
-          if not download_url:
-              raise Exception(f'All attempts failed. Last error: {d2}')
+              if not worker_url:
+                  raise Exception('ytdown.to: no suitable quality found')
 
-          print(f'Download URL: {download_url}')
+              # Step 2: Queue the download
+              r2 = s.post(api_url, data=json.dumps(worker_url),
+                          headers=api_hdrs, timeout=30)
+              r2.raise_for_status()
 
-          # Step 3: Download the MP4
-          print('Downloading file...')
+              # Step 3: Poll until fileUrl is ready (max 5 min)
+              print('  ytdown.to: waiting for processing...')
+              for i in range(60):
+                  time.sleep(5)
+                  r3 = s.post(api_url, data=json.dumps(worker_url),
+                              headers=api_hdrs, timeout=30)
+                  r3.raise_for_status()
+                  d3 = r3.json()['api']
+                  pct = d3.get('percent', '?')
+                  print(f'  ytdown.to: {d3.get("status")} {pct}')
+                  update_status(f'🔗 Backup source processing: {pct}')
+
+                  file_url = d3.get('fileUrl', 'Waiting...')
+                  if file_url and file_url != 'Waiting...':
+                      print(f'  ytdown.to: ready!')
+                      return file_url, title
+
+                  if d3.get('status') == 'error':
+                      raise Exception(f'ytdown.to processing error: {d3}')
+
+              raise Exception('ytdown.to: polling timed out after 5 minutes')
+
+          # ════════════════════════════════════════════════════════
+          #  MAIN — try cnvmp3, fall back to ytdown.to
+          # ════════════════════════════════════════════════════════
+          update_status('⚙️ Starting download...')
+
+          download_url = None
+          title        = None
+
+          # Try cnvmp3 first
+          try:
+              download_url, title = try_cnvmp3(video_id)
+              update_status(f'⬇️ Downloading "{title[:35]}"...')
+          except Exception as e1:
+              print(f'cnvmp3 failed: {e1}')
+              update_status('⚠️ Primary source failed — trying backup...')
+
+              # Fall back to ytdown.to
+              try:
+                  download_url, title = try_ytdownto(video_id)
+                  update_status(f'⬇️ Downloading "{title[:35]}" (backup source)...')
+              except Exception as e2:
+                  update_status('❌ All download sources failed')
+                  raise Exception(f'All sources failed.\ncnvmp3: {e1}\nytdown.to: {e2}')
+
+          # ── Download the file ────────────────────────────────────
           safe_title = "".join(c for c in title if c not in r'\/:*?"<>|').strip()
           file_name  = f'{safe_title}.mp4'
           file_path  = f'/tmp/{file_name}'
 
-          with session.get(download_url, stream=True, timeout=600) as r:
+          print(f'Downloading: {file_name}')
+          with requests.get(download_url, stream=True, timeout=600) as r:
               r.raise_for_status()
+              total    = int(r.headers.get('content-length', 0))
+              total_mb = round(total / 1e6, 1) if total else '?'
               with open(file_path, 'wb') as f:
-                  downloaded = 0
+                  downloaded  = 0
+                  last_update = 0
                   for chunk in r.iter_content(chunk_size=10 * 1024 * 1024):
                       f.write(chunk)
                       downloaded += len(chunk)
-                      print(f'  {round(downloaded / 1e6, 1)} MB...')
+                      mb = round(downloaded / 1e6, 1)
+                      if mb - last_update >= 50:
+                          update_status(f'⬇️ Downloading: {mb} / {total_mb} MB')
+                          last_update = mb
 
           size_mb = round(os.path.getsize(file_path) / 1e6, 1)
           print(f'Download complete: {file_name} ({size_mb} MB)')
 
-          # Step 4: Upload to Google Drive
+          # ── Upload to Google Drive ───────────────────────────────
+          update_status(f'☁️ Uploading to Drive ({size_mb} MB)...')
           print('Uploading to Drive...')
+
           creds = Credentials(
               token=None,
               refresh_token=os.environ['GOOGLE_REFRESH_TOKEN'],
@@ -123,15 +225,21 @@ jobs:
               scopes=['https://www.googleapis.com/auth/drive']
           )
           creds.refresh(Request())
-
-          drive    = build('drive', 'v3', credentials=creds)
-          media    = MediaFileUpload(file_path, mimetype='video/mp4',
-                                     resumable=True, chunksize=10 * 1024 * 1024)
-          uploaded = drive.files().create(
+          drive  = build('drive', 'v3', credentials=creds)
+          media  = MediaFileUpload(file_path, mimetype='video/mp4',
+                                   resumable=True, chunksize=10 * 1024 * 1024)
+          req    = drive.files().create(
               body={'name': file_name, 'parents': [folder_id]},
-              media_body=media,
-              fields='id,name'
-          ).execute()
+              media_body=media, fields='id,name'
+          )
+          response = None
+          while response is None:
+              status, response = req.next_chunk()
+              if status:
+                  pct = int(status.progress() * 100)
+                  mb  = round(status.resumable_progress / 1e6, 1)
+                  update_status(f'☁️ Uploading: {pct}% ({mb} / {size_mb} MB)')
 
+          update_status(f'✅ Done! "{title[:40]}" saved to Drive → YouTube Downloads')
           print(f'Done! "{file_name}" is in your YouTube Downloads folder.')
           PYEOF
