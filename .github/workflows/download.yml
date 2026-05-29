@@ -110,13 +110,13 @@ jobs:
 
               api_url  = 'https://app.ytdown.to/proxy.php'
               api_hdrs = {
-                  'Content-Type': 'application/json; charset=utf-8',
+                  'Content-Type':    'application/json; charset=utf-8',
                   'X-Requested-With': 'XMLHttpRequest',
               }
 
               # Step 1: Get video info + quality options
               print('  ytdown.to: getting video info...')
-              r1 = s.post(api_url, data=json.dumps(yt_url),
+              r1 = s.post(api_url, data=yt_url,
                           headers=api_hdrs, timeout=30)
               r1.raise_for_status()
               d1 = r1.json()
@@ -141,7 +141,7 @@ jobs:
                   raise Exception('ytdown.to: no suitable quality found')
 
               # Step 2: Queue the download
-              r2 = s.post(api_url, data=json.dumps(worker_url),
+              r2 = s.post(api_url, data=worker_url,
                           headers=api_hdrs, timeout=30)
               r2.raise_for_status()
 
@@ -149,7 +149,7 @@ jobs:
               print('  ytdown.to: waiting for processing...')
               for i in range(60):
                   time.sleep(5)
-                  r3 = s.post(api_url, data=json.dumps(worker_url),
+                  r3 = s.post(api_url, data=worker_url,
                               headers=api_hdrs, timeout=30)
                   r3.raise_for_status()
                   d3 = r3.json()['api']
@@ -176,13 +176,12 @@ jobs:
           title        = None
 
           # Try cnvmp3 first
-          # TESTING BACKUP — swap back after testing
           try:
-              download_url, title = try_ytdownto(video_id)
+              download_url, title = try_cnvmp3(video_id)
               update_status(f'⬇️ Downloading "{title[:35]}"...')
           except Exception as e1:
               print(f'cnvmp3 failed: {e1}')
-              update_status('⚠️ Primary source failed — trying backup...')
+              update_status('⚠️ Primary source failed — trying backup (ytdown.to)...')
 
               # Fall back to ytdown.to
               try:
