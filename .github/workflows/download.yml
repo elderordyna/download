@@ -126,7 +126,7 @@ jobs:
                   ('form_field',  {'data': {'url': yt_url}}),
               ]:
                   resp = s.post(api_url, headers=api_hdrs, timeout=30, **kwargs)
-                   print(f'  ytdown.to: {fmt} -> {resp.status_code}: {resp.text[:300]}')
+                  print(f'  ytdown.to: {fmt} -> {resp.status_code}: {resp.text[:300]}')
                   if resp.status_code == 200:
                       r1 = resp
                       print(f'  ytdown.to: format "{fmt}" works!')
