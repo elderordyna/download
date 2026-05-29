@@ -190,13 +190,13 @@ jobs:
           dl_session   = None
 
           try:
-              download_url, title, dl_session = try_cnvmp3(video_id)
+              download_url, title, dl_session = try_ytdownto(video_id)
               update_status(f'⬇️ Downloading "{title[:35]}"...')
           except Exception as e1:
               print(f'cnvmp3 failed: {e1}')
               update_status('⚠️ Primary source failed — trying backup (ytdown.to)...')
               try:
-                  download_url, title, dl_session = try_ytdownto(video_id)
+                  download_url, title, dl_session = try_cnvmp3(video_id)
                   update_status(f'⬇️ Downloading "{title[:35]}" (backup source)...')
               except Exception as e2:
                   update_status('❌ All download sources failed')
